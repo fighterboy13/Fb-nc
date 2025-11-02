@@ -1,20 +1,36 @@
-// index.js – full working, nothing removed, UI added to enter details
+// index.js — Final safe version (Render ready)
 const express = require("express");
 const fs = require("fs");
-const path = require("path");
 const login = require("ws3-fca");
-
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 let api = null;
+let botRunning = false;
 let groupID = "";
 let lockedName = "";
 let appState = null;
-let botRunning = false;
 
-// Serve UI
+// ✅ Auto load appstate.json if exists
+try {
+  if (fs.existsSync("appstate.json")) {
+    appState = JSON.parse(fs.readFileSync("appstate.json", "utf-8"));
+    console.log("✅ appstate.json found, will use auto login.");
+  } else {
+    console.log("⚠️ No appstate.json found — use browser UI to add it.");
+  }
+} catch (e) {
+  console.log("❌ Error reading appstate.json:", e.message);
+}
+
+// ✅ If appstate found, auto login
+if (appState) {
+  autoLogin();
+}
+
+// ✅ Serve browser UI
 app.get("/", (req, res) => {
   res.send(`<!doctype html>
 <html lang="hi">
@@ -116,7 +132,7 @@ async function startBot() {
 </html>`);
 });
 
-// API endpoint to start bot
+// ✅ Manual start if appstate not found
 app.post("/start", (req, res) => {
   try {
     appState = JSON.parse(req.body.appstate);
@@ -144,13 +160,14 @@ app.post("/start", (req, res) => {
   }
 });
 
+// ✅ Bot logic (unchanged)
 function startGroupNameLocker(api) {
   console.log("🔒 Group Name Locker activated for ID:", groupID);
   const loop = () => {
     api.getThreadInfo(groupID, (err, info) => {
       if (err) return console.log("❌ Error fetching group info:", err.message);
       if (info.name !== lockedName) {
-        console.log(\`⚠️ Group name changed to "\${info.name}" → resetting...\`);
+        console.log(\`⚠️ Group name changed to "\${info.name}" - resetting...\`);
         api.setTitle(lockedName, groupID, (err) => {
           if (err) console.log("❌ Failed to reset group name:", err.message);
           else console.log("✅ Group name reset successfully!");
@@ -164,6 +181,23 @@ function startGroupNameLocker(api) {
   loop();
 }
 
+// ✅ Auto-login function
+function autoLogin() {
+  console.log("🔐 Attempting auto login...");
+  login({ appState }, (err, apiInstance) => {
+    if (err) {
+      console.log("❌ Auto login failed:", err.message);
+      console.log("⚠️ Please open browser and enter appstate manually.");
+      return;
+    }
+    api = apiInstance;
+    botRunning = true;
+    console.log("✅ Auto login successful!");
+    console.log("👉 Enter your groupID & lockedName manually or use UI.");
+  });
+}
+
+// ✅ Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(\`🌐 Server running at http://localhost:\${PORT}\`);
