@@ -1,7 +1,7 @@
 // index.js — Final safe version (no emojis, no syntax issue)
 const express = require("express");
 const fs = require("fs");
-const login = require("ws3-fca");
+const login = require("fb-chat-api");
 const app = express();
 
 app.use(express.json({ limit: "10mb" }));
