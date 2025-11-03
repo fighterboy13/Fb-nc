@@ -1,204 +1,184 @@
-// index.js — Final safe version (no emojis, no syntax issue)
 const express = require("express");
 const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
 const login = require("fb-chat-api");
-const app = express();
 
+const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+const upload = multer({ dest: "uploads/" });
 
-let api = null;
-let botRunning = false;
-let groupID = "";
-let lockedName = "";
-let appState = null;
+let api = null, botRunning = false, groupID = "", lockedName = "", appState = null;
 
-// Auto-load appstate.json if it exists
+// auto-load appstate.json if exists
 try {
   if (fs.existsSync("appstate.json")) {
-    appState = JSON.parse(fs.readFileSync("appstate.json", "utf-8"));
-    console.log("appstate.json found, auto login enabled.");
-  } else {
-    console.log("No appstate.json found — open in browser to add it.");
+    appState = JSON.parse(fs.readFileSync("appstate.json", "utf8"));
+    console.log("appstate.json found, auto-login will be attempted.");
   }
 } catch (e) {
-  console.log("Error reading appstate.json:", e.message);
+  console.log("Error loading appstate.json:", e.message);
 }
 
-// Auto-login if appstate found
-if (appState) {
-  autoLogin();
-}
+if (appState) attemptAutoLogin();
 
-// Serve browser UI
-app.get("/", (req, res) => {
-  res.send(`<!doctype html>
+// UI page
+app.get("/", (_, res) => {
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Group Locker Bot</title>
 <style>
-body {
-  background: url('https://wallpaperaccess.com/full/5651983.jpg') center/cover no-repeat fixed;
-  font-family: 'Poppins', sans-serif;
-  color: #fff;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-  flex-direction: column;
+body{
+  margin:0;height:100vh;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0f1724,#1b2638,#0f1724);
+  background-size:400% 400%;animation:bg 10s ease infinite;
+  font-family:Poppins, sans-serif;color:#fff;
 }
-.container {
-  background: rgba(0,0,0,0.7);
-  padding: 30px;
-  border-radius: 20px;
-  text-align: center;
-  width: 90%;
-  max-width: 500px;
-  box-shadow: 0 0 20px #00ffcc;
+@keyframes bg{
+  0%{background-position:0% 50%;}
+  50%{background-position:100% 50%;}
+  100%{background-position:0% 50%;}
 }
-h1 {
-  color: #00ffcc;
-  text-shadow: 0 0 20px #00ffcc;
+.container{
+  background:rgba(0,0,0,0.7);padding:30px;border-radius:16px;
+  box-shadow:0 0 30px rgba(123,97,255,0.3);
+  text-align:center;width:90%;max-width:520px;
 }
-input, textarea {
-  width: 90%;
-  margin: 10px 0;
-  padding: 10px;
-  border-radius: 10px;
-  border: none;
-  outline: none;
+h1{color:#7df9d8;text-shadow:0 0 15px #7df9d8;}
+input,textarea{
+  width:90%;padding:10px;margin:8px 0;
+  border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;
 }
-button {
-  background: #00ffcc;
-  color: #000;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-weight: bold;
-  transition: 0.3s;
+button{
+  padding:10px 20px;margin:6px;
+  border:none;border-radius:8px;cursor:pointer;
+  background:linear-gradient(90deg,#7df9d8,#7b61ff);
+  color:#000;font-weight:bold;
 }
-button:hover {
-  background: #00ffaa;
-}
-.log-box {
-  margin-top: 15px;
-  background: rgba(255,255,255,0.1);
-  border-radius: 10px;
-  padding: 10px;
-  height: 200px;
-  overflow-y: auto;
-  text-align: left;
-  font-family: monospace;
-  font-size: 13px;
-}
+.log{background:rgba(255,255,255,0.05);border-radius:10px;padding:10px;margin-top:10px;height:160px;overflow:auto;text-align:left;font-family:monospace;font-size:13px;}
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>Group Name Locker Bot</h1>
-  <p>Fill below details to start the bot:</p>
-  <textarea id="appstate" placeholder='Paste appstate.json content here' rows="5"></textarea><br>
-  <input type="text" id="groupID" placeholder="Enter Group Thread ID" /><br>
-  <input type="text" id="lockedName" placeholder="Enter Locked Group Name" /><br>
+  <h1>YK TRICKS INDIA</h1>
+  <p>Upload your <b>appstate.json</b> and enter group details below.</p>
+  <input type="file" id="fileInput" accept=".json"/><br>
+  <textarea id="appstateText" rows="4" placeholder="Or paste appstate.json content here"></textarea><br>
+  <button onclick="uploadFile()">Upload File</button>
+  <button onclick="saveText()">Save From Text</button><br>
+  <input type="text" id="groupID" placeholder="Enter Group Thread ID"/><br>
+  <input type="text" id="lockedName" placeholder="Enter Locked Group Name"/><br>
   <button onclick="startBot()">Start Bot</button>
-  <div class="log-box" id="logs">[System] Waiting for input...</div>
+  <button onclick="stopBot()">Stop Bot</button>
+  <div class="log" id="logs">[System] Ready.</div>
 </div>
 <script>
-async function startBot() {
-  const appstate = document.getElementById('appstate').value.trim();
-  const groupID = document.getElementById('groupID').value.trim();
-  const lockedName = document.getElementById('lockedName').value.trim();
-  const logs = document.getElementById('logs');
-
-  if(!appstate || !groupID || !lockedName) {
-    logs.innerHTML += "\\nPlease fill all fields!";
-    return;
-  }
-
-  logs.innerHTML += "\\nStarting bot...";
-  const res = await fetch('/start', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ appstate, groupID, lockedName })
-  });
-  const data = await res.json();
-  logs.innerHTML += "\\n" + data.message;
+function log(t){const e=document.getElementById('logs');e.innerText+="\\n"+t;e.scrollTop=e.scrollHeight;}
+async function uploadFile(){
+ const f=document.getElementById('fileInput').files[0];
+ if(!f){log("Select a file first.");return;}
+ const fd=new FormData();fd.append('appstate',f);
+ log("Uploading appstate.json...");
+ const r=await fetch('/upload',{method:'POST',body:fd});const j=await r.json();log(j.message);
+}
+async function saveText(){
+ const t=document.getElementById('appstateText').value.trim();
+ if(!t){log("No text provided.");return;}
+ log("Saving appstate from pasted text...");
+ const r=await fetch('/save-text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({appstate:t})});
+ const j=await r.json();log(j.message);
+}
+async function startBot(){
+ const g=document.getElementById('groupID').value.trim();
+ const l=document.getElementById('lockedName').value.trim();
+ if(!g||!l){log("Please fill Group ID and Locked Name.");return;}
+ log("Starting bot...");
+ const r=await fetch('/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupID:g,lockedName:l})});
+ const j=await r.json();log(j.message);
+}
+async function stopBot(){
+ const r=await fetch('/stop',{method:'POST'});const j=await r.json();log(j.message);
 }
 </script>
 </body>
 </html>`);
 });
 
-// Manual start if appstate not found
-app.post("/start", (req, res) => {
+// upload via file
+app.post("/upload", upload.single("appstate"), (req, res) => {
   try {
-    appState = JSON.parse(req.body.appstate);
-    groupID = req.body.groupID;
-    lockedName = req.body.lockedName;
-
-    fs.writeFileSync("appstate.json", JSON.stringify(appState, null, 2));
-
-    if (botRunning) return res.json({ message: "Bot is already running!" });
-
-    login({ appState }, (err, apiInstance) => {
-      if (err) {
-        console.error("Login failed:", err);
-        return res.json({ message: "Login failed: " + err.message });
-      }
-      api = apiInstance;
-      botRunning = true;
-      console.log("Login successful!");
-      res.json({ message: "Bot started and logged in successfully!" });
-      startGroupNameLocker(api);
-    });
+    const tmp = req.file.path;
+    fs.copyFileSync(tmp, "appstate.json");
+    fs.unlinkSync(tmp);
+    appState = JSON.parse(fs.readFileSync("appstate.json"));
+    res.json({ message: "appstate.json uploaded and saved." });
   } catch (e) {
-    console.error("Error:", e);
-    res.json({ message: "Invalid appstate.json format!" });
+    res.status(500).json({ message: "Upload failed: " + e.message });
   }
 });
 
-// Group name locker loop
-function startGroupNameLocker(api) {
-  console.log("Group Name Locker activated for ID:", groupID);
+// save pasted text
+app.post("/save-text", (req, res) => {
+  try {
+    const raw = req.body.appstate;
+    if (!raw) return res.json({ message: "No appstate content." });
+    const parsed = JSON.parse(raw);
+    fs.writeFileSync("appstate.json", JSON.stringify(parsed, null, 2));
+    appState = parsed;
+    res.json({ message: "appstate.json saved." });
+  } catch (e) {
+    res.status(500).json({ message: "Save failed: " + e.message });
+  }
+});
+
+// start bot
+app.post("/start", (req, res) => {
+  if (!appState) return res.json({ message: "Upload appstate.json first." });
+  if (botRunning) return res.json({ message: "Bot already running." });
+  groupID = req.body.groupID; lockedName = req.body.lockedName;
+  if (!groupID || !lockedName) return res.json({ message: "Group ID and Locked Name required." });
+  login({ appState }, (err, apiInstance) => {
+    if (err) return res.json({ message: "Login failed: " + err.message });
+    api = apiInstance; botRunning = true;
+    res.json({ message: "Bot started successfully." });
+    runLocker(api);
+  });
+});
+
+// stop bot
+app.post("/stop", (_, res) => { botRunning = false; res.json({ message: "Bot stopped." }); });
+
+// group locker loop
+function runLocker(api){
   const loop = () => {
+    if (!botRunning) return;
     api.getThreadInfo(groupID, (err, info) => {
-      if (err) return console.log("Error fetching group info:", err.message);
-      if (info.name !== lockedName) {
-        console.log(\`Warning: Group name changed to "\${info.name}" - resetting...\`);
-        api.setTitle(lockedName, groupID, (err) => {
-          if (err) console.log("Failed to reset group name:", err.message);
+      if (err) return console.log("Error:", err.message);
+      if (info.name !== lockedName){
+        console.log("Group name changed to", info.name, "→ resetting...");
+        api.setTitle(lockedName, groupID, e=>{
+          if(e) console.log("Reset failed:", e.message);
           else console.log("Group name reset successfully!");
         });
-      } else {
-        console.log("Group name is correct.");
-      }
-      setTimeout(loop, 2000);
+      } else console.log("Group name is correct.");
     });
+    setTimeout(loop,2000);
   };
   loop();
 }
 
-// Auto login function
-function autoLogin() {
-  console.log("Attempting auto login...");
+// auto-login helper
+function attemptAutoLogin(){
   login({ appState }, (err, apiInstance) => {
-    if (err) {
-      console.log("Auto login failed:", err.message);
-      console.log("Please open browser and enter appstate manually.");
-      return;
-    }
-    api = apiInstance;
-    botRunning = true;
-    console.log("Auto login successful!");
-    console.log("Enter your groupID & lockedName manually or use UI.");
+    if (err) return console.log("Auto-login failed:", err.message);
+    api = apiInstance; console.log("Auto-login successful. Ready.");
   });
 }
 
-// Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("Server running at http://localhost:" + PORT);
-});
+app.listen(PORT, ()=>console.log("Server running on port", PORT));
